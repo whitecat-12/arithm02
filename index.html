@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chatbot AI</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/universal-sentence-encoder"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #e5ddd5;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+        .chat-container {
+            width: 90%;
+            max-width: 400px;
+            height: 80vh;
+            max-height: 700px;
+            background-color: #fff;
+            border-radius: 10px;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .chat-header {
+            background-color: #6a0dad;
+            color: white;
+            padding: 15px;
+            text-align: center;
+            font-weight: bold;
+        }
+        .chat-box {
+            flex: 1;
+            padding: 10px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+        }
+        .message {
+            max-width: 80%;
+            margin: 5px;
+            padding: 10px;
+            border-radius: 10px;
+        }
+        .user-message {
+            background-color: #d8b3ff;
+            align-self: flex-end;
+        }
+        .bot-message {
+            background-color: #fff;
+            align-self: flex-start;
+            border: 1px solid #ddd;
+        }
+        .chat-input {
+            display: flex;
+            padding: 10px;
+            background-color: #f0f0f0;
+            border-top: 1px solid #ccc;
+        }
+        .chat-input input {
+            flex: 1;
+            padding: 10px;
+            border: none;
+            border-radius: 5px;
+            outline: none;
+        }
+        .chat-input button {
+            background-color: #6a0dad;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            margin-left: 5px;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        @media (max-width: 600px) {
+            .chat-container {
+                width: 95%;
+                height: 85vh;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="chat-container">
+        <div class="chat-header">Chatbot AI</div>
+        <div id="chat-box" class="chat-box"></div>
+        <div class="chat-input">
+            <input type="text" id="user-input" placeholder="Ketik pesan..." />
+            <button onclick="sendMessage()">Kirim</button>
+        </div>
+    </div>
+
+    <script>
+        
+		let chatbotModel;
+let responses = [];
+
+// Fungsi untuk memuat daftar respons dari JSON
+async function loadResponses() {
+    try {
+        const response = await fetch('responses.json'); // Ambil data dari JSON
+        responses = await response.json();
+        console.log("✅ Data respons berhasil dimuat!", responses);
+    } catch (error) {
+        console.error("❌ Gagal memuat data respons!", error);
+    }
+}
+
+// Fungsi untuk memuat model AI (pastikan 'use' benar)
+async function loadModel() {
+    try {
+        console.log("⏳ Memuat model AI...");
+        chatbotModel = await tf.loadLayersModel('model.json'); // Contoh pemanggilan model TensorFlow.js
+        console.log("✅ Model AI siap digunakan!");
+    } catch (error) {
+        console.error("❌ Gagal memuat model AI!", error);
+    }
+}
+
+// Memanggil fungsi untuk memuat data JSON dan model AI
+loadResponses();
+loadModel();
+
+function correctSpelling(input) {
+    const dictionary = responses.map(r => r.input);
+
+    function jaroWinkler(s1, s2) {
+        let m = 0, t = 0, prefix = 0;
+        let maxDist = Math.floor(Math.max(s1.length, s2.length) / 2) - 1;
+        let match1 = new Array(s1.length).fill(false);
+        let match2 = new Array(s2.length).fill(false);
+
+        for (let i = 0; i < s1.length; i++) {
+            let start = Math.max(0, i - maxDist);
+            let end = Math.min(s2.length - 1, i + maxDist);
+            for (let j = start; j <= end; j++) {
+                if (s1[i] === s2[j] && !match2[j]) {
+                    match1[i] = match2[j] = true;
+                    m++;
+                    break;
+                }
+            }
+        }
+
+        if (m === 0) return 0;
+
+        let k = 0;
+        for (let i = 0; i < s1.length; i++) {
+            if (match1[i]) {
+                let j = k;
+                while (!match2[j]) j++;
+                if (s1[i] !== s2[j]) t++;
+                k = j + 1;
+            }
+        }
+        t /= 2;
+        let jaro = (m / s1.length + m / s2.length + (m - t) / m) / 3;
+        while (prefix < 4 && s1[prefix] === s2[prefix]) prefix++;
+
+        return jaro + prefix * 0.1 * (1 - jaro);
+    }
+
+    let correctedWord = dictionary.reduce((bestMatch, word) => {
+        let score = jaroWinkler(input.toLowerCase(), word.toLowerCase());
+        return score > bestMatch.score ? { word, score } : bestMatch;
+    }, { word: input, score: 0 });
+
+    return correctedWord.score > 0.85 ? correctedWord.word : input;
+}
+
+async function getBotResponse(userInput) {
+    if (!chatbotModel) {
+        return "⏳ Model AI masih dimuat... Tunggu sebentar.";
+    }
+
+    let correctedInput = correctSpelling(userInput);
+    console.log(`🛠 Koreksi: "${userInput}" → "${correctedInput}"`);
+
+    const sentences = responses.map(r => r.input);
+    const embeddings = await chatbotModel.embed([correctedInput, ...sentences]);
+    const userEmbedding = embeddings.slice([0, 0], [1, -1]);
+
+    function cosineSimilarity(a, b) {
+        return tf.tidy(() => {
+            const dotProduct = tf.sum(tf.mul(a, b));
+            const normA = tf.norm(a);
+            const normB = tf.norm(b);
+            return dotProduct.div(normA.mul(normB)).dataSync()[0];
+        });
+    }
+
+    let bestMatchIndex = -1;
+    let bestMatchScore = -1;
+
+    for (let i = 0; i < sentences.length; i++) {
+        let sentenceEmbedding = embeddings.slice([i + 1, 0], [1, -1]);
+        let similarity = cosineSimilarity(userEmbedding, sentenceEmbedding);
+
+        if (similarity > bestMatchScore) {
+            bestMatchScore = similarity;
+            bestMatchIndex = i;
+        }
+    }
+
+    if (bestMatchIndex !== -1 && bestMatchScore > 0.5) {
+        return responses[bestMatchIndex].output;
+    } else {
+        return "Maaf, aku belum mengerti. Bisa tanya dengan cara lain?";
+    }
+}
+
+async function sendMessage() {
+    const userInput = document.getElementById('user-input').value;
+    if (userInput.trim() === '') return;
+
+    const chatBox = document.getElementById('chat-box');
+    chatBox.innerHTML += `<div class="message user-message"><strong>Kamu:</strong> ${userInput}</div>`;
+
+    let typingIndicator = document.createElement("div");
+    typingIndicator.classList.add("message", "bot-message");
+    typingIndicator.innerHTML = "<strong>Chatbot:</strong> <em>Sedang mengetik...</em>";
+    chatBox.appendChild(typingIndicator);
+
+    chatBox.scrollTop = chatBox.scrollHeight;
+    document.getElementById('user-input').value = '';
+
+    setTimeout(async () => {
+        chatBox.removeChild(typingIndicator);
+        let botResponse = await getBotResponse(userInput);
+
+        chatBox.innerHTML += `<div class="message bot-message"><strong>Chatbot:</strong> ${botResponse}</div>`;
+        chatBox.scrollTop = chatBox.scrollHeight;
+    }, 1500);
+}
+
+       
+    </script>
+
+</body>
+</html>
